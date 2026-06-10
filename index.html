@@ -41,6 +41,10 @@
   .btn:hover{background:rgba(255,255,255,.16)}
   .btn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .btn.active{background:var(--cyan);border-color:var(--cyan);color:var(--navy)}
+  .btn.history{display:none}
+  body.editing .btn.history{display:inline-block}
+  .btn:disabled{opacity:.35;cursor:default}
+  .btn:disabled:hover{background:rgba(255,255,255,.08)}
 
   .grid{
     max-width:1360px;margin:0 auto;
@@ -93,6 +97,24 @@
   }
   .restore:hover{background:rgba(0,128,145,.18)}
   body.editing .restore{display:inline-block}
+  .drag-row{
+    display:none;align-items:center;gap:6px;margin:-6px 0 10px;
+  }
+  body.editing .drag-row{display:flex}
+  .handle{
+    flex:1;text-align:center;font-size:14px;letter-spacing:3px;
+    color:var(--muted);background:rgba(0,36,71,.05);border-radius:8px;
+    padding:4px 0;cursor:grab;user-select:none;
+  }
+  .handle:active{cursor:grabbing}
+  .mv{
+    flex:none;width:26px;height:26px;border:none;border-radius:8px;
+    background:rgba(0,82,143,.08);color:var(--blue);font-size:12px;
+    cursor:pointer;font-family:inherit;
+  }
+  .mv:hover{background:var(--blue);color:#fff}
+  .card.dragging{opacity:.45}
+  .card.dragover{outline:3px dashed var(--cyan);outline-offset:4px}
   [contenteditable="true"]:focus{outline-style:solid;background:rgba(0,196,223,.08)}
 
   /* ── vista expandida ── */
@@ -183,6 +205,8 @@
     <div class="sub" id="subtitle" data-h="subtitle"></div>
   </div>
   <div class="toolbar">
+    <button class="btn history" id="undoBtn" disabled title="Deshacer el último cambio">↩ Deshacer</button>
+    <button class="btn history" id="redoBtn" disabled title="Rehacer el cambio deshecho">↪ Rehacer</button>
     <button class="btn" id="editBtn">✎ Editar datos</button>
     <button class="btn" id="printBtn">Imprimir / PDF</button>
   </div>
@@ -288,6 +312,42 @@ let data = load();
 let config = loadConfig();
 let editing = false;
 
+// ── historial para deshacer/rehacer en modo edición ──
+const undoStack = [];
+const redoStack = [];
+let lastSnapshotEl = null;
+function snapshot(){
+  undoStack.push(JSON.stringify({ data, config }));
+  if(undoStack.length > 50) undoStack.shift();
+  redoStack.length = 0;
+  updateHistoryButtons();
+}
+function restoreState(s){
+  const st = JSON.parse(s);
+  data = st.data;
+  config = st.config;
+  save(); saveConfig();
+  renderHeader(); render();
+}
+function undo(){
+  if(!undoStack.length) return;
+  redoStack.push(JSON.stringify({ data, config }));
+  restoreState(undoStack.pop());
+  lastSnapshotEl = null;
+  updateHistoryButtons();
+}
+function redo(){
+  if(!redoStack.length) return;
+  undoStack.push(JSON.stringify({ data, config }));
+  restoreState(redoStack.pop());
+  lastSnapshotEl = null;
+  updateHistoryButtons();
+}
+function updateHistoryButtons(){
+  document.getElementById("undoBtn").disabled = !undoStack.length;
+  document.getElementById("redoBtn").disabled = !redoStack.length;
+}
+
 function load(){
   try{
     const raw = localStorage.getItem(STORE_KEY);
@@ -330,8 +390,14 @@ function render(){
   data.forEach((m,i)=>{
     const card = document.createElement("article");
     card.className = "card";
+    card.dataset.idx = i;
     const hidden = m._hidden || [];
     let html = `
+      <div class="drag-row">
+        <button class="mv" data-mv="-1" data-i="${i}" title="Mover a la izquierda" aria-label="Mover ${esc(m.name)} a la izquierda">◀</button>
+        <span class="handle" title="Arrastrar para reordenar">⠿⠿⠿</span>
+        <button class="mv" data-mv="1" data-i="${i}" title="Mover a la derecha" aria-label="Mover ${esc(m.name)} a la derecha">▶</button>
+      </div>
       <div class="country" data-i="${i}" data-k="name">${esc(m.name)}</div>
       <div class="country-sub" data-i="${i}" data-k="sub">${esc(m.sub||"")}</div>`;
     FIELDS.forEach(f=>{
@@ -384,7 +450,7 @@ function applyEditState(){
   document.getElementById("editBtn").classList.toggle("active", editing);
   document.getElementById("editBtn").textContent = editing ? "✓ Guardar" : "✎ Editar datos";
   document.getElementById("hint").textContent = editing
-    ? "Clic en cualquier dato o etiqueta para editarlo · × quita un dato de la tarjeta · ＋ lo vuelve a agregar. Se guarda en este navegador."
+    ? "Clic en un dato para editarlo · × quita · ＋ agrega · ⠿ o ◀ ▶ reordenan países · ↩ deshace (Ctrl+Z). Se guarda en este navegador."
     : "";
 }
 
@@ -393,6 +459,15 @@ document.querySelector("header").addEventListener("input", e=>{
   if(!el || !editing) return;
   config[el.dataset.h] = el.textContent;
   saveConfig();
+});
+
+document.addEventListener("focusin", e=>{
+  if(!editing) return;
+  const el = e.target.closest("[data-k],[data-h],[data-l]");
+  if(el && el !== lastSnapshotEl){
+    snapshot();
+    lastSnapshotEl = el;
+  }
 });
 
 document.getElementById("grid").addEventListener("input", e=>{
@@ -417,6 +492,8 @@ document.getElementById("grid").addEventListener("click", e=>{
   if(!editing) return;
   const del = e.target.closest("[data-del]");
   if(del){
+    snapshot();
+    lastSnapshotEl = null;
     const m = data[+del.dataset.i];
     m._hidden = m._hidden || [];
     if(!m._hidden.includes(del.dataset.del)) m._hidden.push(del.dataset.del);
@@ -425,18 +502,82 @@ document.getElementById("grid").addEventListener("click", e=>{
   }
   const res = e.target.closest("[data-restore]");
   if(res){
+    snapshot();
+    lastSnapshotEl = null;
     const m = data[+res.dataset.i];
     m._hidden = (m._hidden||[]).filter(k=>k!==res.dataset.restore);
     save(); render();
+    return;
   }
+  const mv = e.target.closest("[data-mv]");
+  if(mv){
+    moveCard(+mv.dataset.i, +mv.dataset.i + (+mv.dataset.mv));
+  }
+});
+
+function moveCard(from, to){
+  if(to < 0 || to >= data.length || from === to) return;
+  snapshot();
+  lastSnapshotEl = null;
+  const [m] = data.splice(from, 1);
+  data.splice(to, 0, m);
+  save(); render();
+}
+
+// ── drag & drop de tarjetas (desde la manija ⠿) ──
+let dragFrom = -1;
+const gridEl = document.getElementById("grid");
+
+gridEl.addEventListener("mousedown", e=>{
+  if(!editing) return;
+  const h = e.target.closest(".handle");
+  if(h) h.closest(".card").setAttribute("draggable", "true");
+});
+gridEl.addEventListener("dragstart", e=>{
+  const card = e.target.closest(".card");
+  if(!card || !editing){ e.preventDefault(); return; }
+  dragFrom = +card.dataset.idx;
+  card.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move";
+});
+gridEl.addEventListener("dragover", e=>{
+  if(dragFrom < 0) return;
+  e.preventDefault();
+  const card = e.target.closest(".card");
+  document.querySelectorAll(".card.dragover").forEach(c=>c.classList.remove("dragover"));
+  if(card && +card.dataset.idx !== dragFrom) card.classList.add("dragover");
+});
+gridEl.addEventListener("drop", e=>{
+  e.preventDefault();
+  const card = e.target.closest(".card");
+  if(card && dragFrom >= 0) moveCard(dragFrom, +card.dataset.idx);
+});
+gridEl.addEventListener("dragend", ()=>{
+  dragFrom = -1;
+  document.querySelectorAll(".card").forEach(c=>{
+    c.classList.remove("dragging","dragover");
+    c.removeAttribute("draggable");
+  });
 });
 
 document.getElementById("editBtn").addEventListener("click", ()=>{
   editing = !editing;
+  lastSnapshotEl = null;
   if(!editing){ save(); render(); } else { applyEditState(); }
 });
 
 document.getElementById("printBtn").addEventListener("click", ()=>window.print());
+
+document.getElementById("undoBtn").addEventListener("click", undo);
+document.getElementById("redoBtn").addEventListener("click", redo);
+document.addEventListener("keydown", e=>{
+  if(!editing) return;
+  if((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z"){
+    e.preventDefault(); undo();
+  }else if((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))){
+    e.preventDefault(); redo();
+  }
+});
 
 let currentCard = -1;
 function openCard(i){
