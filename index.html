@@ -51,7 +51,16 @@
     cursor:pointer;font-family:inherit;
   }
   .delcountry:hover{background:var(--pink);color:#fff}
-  body.presenting header, body.presenting footer, body.presenting .grid{display:none}
+  body.presenting .toolbar, body.presenting footer{display:none}
+  body.presenting{padding-top:40px}
+  .exit-present{
+    display:none;position:fixed;top:18px;right:18px;z-index:70;
+    width:40px;height:40px;border:1px solid rgba(255,255,255,.3);border-radius:50%;
+    background:rgba(255,255,255,.1);color:#fff;font-size:16px;
+    cursor:pointer;font-family:inherit;backdrop-filter:blur(3px);
+  }
+  .exit-present:hover{background:var(--pink);border-color:var(--pink)}
+  body.presenting .exit-present{display:block}
 
   .grid{
     max-width:1360px;margin:0 auto;
@@ -259,6 +268,8 @@
 </header>
 
 <div class="grid" id="grid"></div>
+
+<button class="exit-present" id="exitPresent" title="Salir de la presentación (Esc)" aria-label="Salir de la presentación">✕</button>
 
 <div class="overlay" id="overlay" role="dialog" aria-modal="true">
   <button class="nav-arrow nav-prev" id="navPrev" aria-label="País anterior">‹</button>
@@ -686,7 +697,11 @@ document.getElementById("presentBtn").addEventListener("click", ()=>{
   if(document.documentElement.requestFullscreen){
     document.documentElement.requestFullscreen().catch(()=>{});
   }
-  openCard(0);
+});
+
+document.getElementById("exitPresent").addEventListener("click", ()=>{
+  closeCard();
+  endPresentation();
 });
 function endPresentation(){
   presenting = false;
@@ -764,7 +779,6 @@ function openCard(i, dir){
 function closeCard(){
   document.getElementById("overlay").classList.remove("open");
   currentCard = -1;
-  if(presenting) endPresentation();
 }
 
 document.getElementById("grid").addEventListener("click", e=>{
